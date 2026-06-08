@@ -16,9 +16,11 @@ load_dotenv()
 app = Flask(__name__)
 
 # ── Clientes ──────────────────────────────────────────────────────────────────
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-twilio_client = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
+def get_openai():
+    return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+def get_twilio():
+    return Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
 # ── Google Sheets ─────────────────────────────────────────────────────────────
 def get_hoja():
     scopes = [
@@ -91,7 +93,7 @@ def transcribir_audio(media_url):
         ruta = f.name
 
     with open(ruta, "rb") as audio:
-        resultado = openai_client.audio.transcriptions.create(
+        resultado = get_openai().audio.transcriptions.create(
             model="whisper-1",
             file=audio,
             language="es",
