@@ -2,7 +2,7 @@ flask==3.0.3
 twilio==9.3.3
 gspread==6.1.2
 google-auth==2.32.0
-openai==1.40.0
+openai==1.6.1
 requests==2.32.3
 python-dotenv==1.0.1
 gunicorn==22.0.0
