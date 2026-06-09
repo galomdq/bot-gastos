@@ -82,7 +82,7 @@ def parsear_gasto(texto):
     elif cat in aliases_negocio:
         categoria = "Negocio"
     else:
-        categoria = categoria.strip().capitalize()
+        "categoria": categoria,
 
     return {
         "descripcion": descripcion.capitalize(),
