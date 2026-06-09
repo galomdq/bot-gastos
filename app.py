@@ -73,6 +73,17 @@ def parsear_gasto(texto):
     if not monto:
         return None
 
+ # Normalizar categoría
+    aliases_particular = ["casa", "particular", "personales", "personal"]
+    aliases_negocio = ["negocio", "gimnasio", "trabajo", "gym"]
+    cat = categoria.strip().lower()
+    if cat in aliases_particular:
+        categoria = "Particular"
+    elif cat in aliases_negocio:
+        categoria = "Negocio"
+    else:
+        categoria = categoria.strip().capitalize()
+
     return {
         "descripcion": descripcion.capitalize(),
         "categoria": categoria.strip().capitalize(),
