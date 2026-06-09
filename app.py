@@ -41,7 +41,7 @@ def cargar_gasto(descripcion, categoria, subcategoria, monto):
     ahora = datetime.now(timezone(timedelta(hours=-3)))
     fecha = ahora.strftime("%d/%m/%Y")
     hora = ahora.strftime("%H:%M")
-    hoja.append_row([fecha, hora, descripcion, categoria, subcategoria, monto])
+    hoja.append_row([fecha, hora, categoria, descripcion, subcategoria, monto])
 
 
 # ── Normalizar categoría ──────────────────────────────────────────────────────
