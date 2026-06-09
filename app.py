@@ -62,9 +62,9 @@ def parsear_gasto(texto):
 
     if len(partes) == 4:
         descripcion, categoria, subcategoria, monto_raw = partes
-    elif len(partes) == 3:
-        # Sin subcategoría: descripcion , categoria , monto
-        descripcion, categoria, monto_raw = partes
+     elif len(partes) == 3:
+        # Sin subcategoría: categoria , descripcion , monto
+        categoria, descripcion, monto_raw = partes
         subcategoria = "-"
     else:
         return None
