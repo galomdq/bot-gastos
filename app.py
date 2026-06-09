@@ -86,11 +86,10 @@ def parsear_gasto(texto):
 
     return {
         "descripcion": descripcion.capitalize(),
-        "categoria": categoria.strip().capitalize(),
+        "categoria": categoria,
         "subcategoria": subcategoria.strip().capitalize(),
         "monto": monto,
     }
-
 
 # ── Transcripción de audio ────────────────────────────────────────────────────
 def transcribir_audio(media_url):
