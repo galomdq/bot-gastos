@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import requests
 import tempfile
 from datetime import datetime, timezone, timedelta
@@ -21,13 +22,13 @@ def get_openai():
 
 def get_twilio():
     return Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
+
 # ── Google Sheets ─────────────────────────────────────────────────────────────
 def get_hoja():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
-    import json
     creds_json = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
     creds = Credentials.from_service_account_info(creds_json, scopes=scopes)
     gc = gspread.authorize(creds)
@@ -43,27 +44,32 @@ def cargar_gasto(descripcion, categoria, subcategoria, monto):
     hoja.append_row([fecha, hora, descripcion, categoria, subcategoria, monto])
 
 
-# ── Parseo del mensaje ────────────────────────────────────────────────────────
-# Formato esperado: descripcion , categoria , subcategoria , monto
-# El monto puede venir como "115000", "115000 pesos", "$115.000", etc.
+# ── Normalizar categoría ──────────────────────────────────────────────────────
+def normalizar_categoria(texto):
+    aliases_particular = ["casa", "particular", "personales", "personal"]
+    aliases_negocio = ["negocio", "gimnasio", "trabajo", "gym", "urban"]
+    cat = texto.strip().lower()
+    if cat in aliases_particular:
+        return "Particular"
+    elif cat in aliases_negocio:
+        return "Negocio"
+    else:
+        return texto.strip().capitalize()
 
+
+# ── Parseo del mensaje ────────────────────────────────────────────────────────
 def limpiar_monto(texto):
-    """Extrae solo los dígitos del monto."""
     solo_numeros = re.sub(r"[^\d]", "", texto)
     return int(solo_numeros) if solo_numeros else None
 
 
 def parsear_gasto(texto):
-    """
-    Intenta parsear el texto en (descripcion, categoria, subcategoria, monto).
-    Devuelve None si el formato no es válido.
-    """
     partes = [p.strip() for p in texto.split(",")]
 
     if len(partes) == 4:
         descripcion, categoria, subcategoria, monto_raw = partes
-     elif len(partes) == 3:
-        # Sin subcategoría: categoria , descripcion , monto
+    elif len(partes) == 3:
+        # Formato: categoria , descripcion , monto
         categoria, descripcion, monto_raw = partes
         subcategoria = "-"
     else:
@@ -73,27 +79,16 @@ def parsear_gasto(texto):
     if not monto:
         return None
 
- # Normalizar categoría
-    aliases_particular = ["casa", "particular", "personales", "personal"]
-    aliases_negocio = ["negocio", "gimnasio", "trabajo", "gym"]
-    cat = categoria.strip().lower()
-    if cat in aliases_particular:
-        categoria = "Particular"
-    elif cat in aliases_negocio:
-        categoria = "Negocio"
-    else:
-        "categoria": categoria,
-
     return {
-        "descripcion": descripcion.capitalize(),
-        "categoria": categoria,
+        "descripcion": descripcion.strip().capitalize(),
+        "categoria": normalizar_categoria(categoria),
         "subcategoria": subcategoria.strip().capitalize(),
         "monto": monto,
     }
 
+
 # ── Transcripción de audio ────────────────────────────────────────────────────
 def transcribir_audio(media_url):
-    """Descarga el audio de Twilio y lo transcribe con Whisper."""
     sid = os.getenv("TWILIO_ACCOUNT_SID")
     token = os.getenv("TWILIO_AUTH_TOKEN")
     respuesta = requests.get(media_url, auth=(sid, token))
@@ -115,26 +110,30 @@ def transcribir_audio(media_url):
 # ── Mensaje de confirmación ───────────────────────────────────────────────────
 def mensaje_ok(datos):
     monto_fmt = f"${datos['monto']:,.0f}".replace(",", ".")
+    ahora = datetime.now(timezone(timedelta(hours=-3)))
     return (
         f"✅ *Gasto registrado*\n"
         f"📝 {datos['descripcion']}\n"
         f"🏷️ {datos['categoria']} › {datos['subcategoria']}\n"
         f"💰 {monto_fmt}\n"
-        f"🕐 {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        f"🕐 {ahora.strftime('%d/%m/%Y %H:%M')}"
     )
 
 
 AYUDA = (
-    "📋 *Formato para cargar un gasto:*\n"
-    "`descripción , categoría , subcategoría , monto`\n\n"
-    "*Ejemplos:*\n"
+    "📋 *Formato para cargar un gasto:*\n\n"
+    "*4 campos:*\n"
+    "`descripción , categoría , subcategoría , monto`\n"
     "• `combustible , particular , auto , 115000`\n"
-    "• `factura de luz , negocio , calefaccion , 535000`\n"
-    "• `sueldo , negocio , pedro , 2500000`\n\n"
-    "También podés enviar un *audio* con el mismo formato hablado.\n\n"
-    "Comandos:\n"
-    "• `ayuda` — muestra este mensaje\n"
-    "• `ultimo` — muestra el último gasto cargado"
+    "• `factura de luz , negocio , calefaccion , 535000`\n\n"
+    "*3 campos (sin subcategoría):*\n"
+    "`categoría , descripción , monto`\n"
+    "• `particular , mercado , 150000`\n"
+    "• `negocio , alquiler , 400000`\n\n"
+    "*Categorías válidas:*\n"
+    "• Particular: casa, particular, personal\n"
+    "• Negocio: negocio, gimnasio, gym, urban\n\n"
+    "Comandos: `ayuda` | `ultimo`"
 )
 
 
@@ -163,14 +162,12 @@ def webhook():
     numero_origen = request.form.get("From", "")
     mi_numero = os.getenv("TU_NUMERO_WHATSAPP", "")
 
-    # Seguridad: solo responder a tu propio número
     if mi_numero and numero_origen != mi_numero:
         return "", 403
 
     tipo = request.form.get("MediaContentType0", "")
     texto_raw = request.form.get("Body", "").strip()
 
-    # ── Audio ──
     if tipo.startswith("audio"):
         media_url = request.form.get("MediaUrl0")
         try:
@@ -180,14 +177,12 @@ def webhook():
 
     texto = texto_raw.lower().strip()
 
-    # ── Comandos especiales ──
     if texto in ("ayuda", "help", "hola", "?"):
         return responder(AYUDA)
 
     if texto in ("ultimo", "último", "last"):
         return responder(ultimo_gasto())
 
-    # ── Parsear gasto ──
     datos = parsear_gasto(texto_raw)
     if not datos:
         return responder(
@@ -214,7 +209,6 @@ def responder(texto):
     return str(resp)
 
 
-# ── Keep-alive (evita que Railway duerma el servidor) ─────────────────────────
 @app.route("/ping")
 def ping():
     return "pong", 200
