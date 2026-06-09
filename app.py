@@ -3,6 +3,7 @@ import re
 import requests
 import tempfile
 from datetime import datetime
+import pytz
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.rest import Client
@@ -37,7 +38,7 @@ def get_hoja():
 
 def cargar_gasto(descripcion, categoria, subcategoria, monto):
     hoja = get_hoja()
-    ahora = datetime.now()
+    ahora = datetime.now(pytz.timezone('America/Argentina/Buenos_Aires'))
     fecha = ahora.strftime("%d/%m/%Y")
     hora = ahora.strftime("%H:%M")
     hoja.append_row([fecha, hora, descripcion, categoria, subcategoria, monto])
