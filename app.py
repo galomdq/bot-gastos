@@ -198,6 +198,12 @@ def webhook():
     numero_origen = request.form.get("From", "")
     mi_numero = os.getenv("TU_NUMERO_WHATSAPP", "")
 
+    numeros_permitidos = [
+        os.getenv("TU_NUMERO_WHATSAPP", ""),
+        "whatsapp:+5492235915249",
+    ]
+
+
     if mi_numero and numero_origen != mi_numero:
         return "", 403
 
