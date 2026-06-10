@@ -25,33 +25,53 @@ def get_twilio():
 
 # ── Google Sheets ─────────────────────────────────────────────────────────────
 def get_hoja():
+    gc = conectar_sheets()
+    spreadsheet = gc.open_by_key(os.getenv("SPREADSHEET_ID"))
+    return spreadsheet.worksheet(os.getenv("HOJA_NOMBRE", "Hoja 1"))
+
+def conectar_sheets():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
     creds_json = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
     creds = Credentials.from_service_account_info(creds_json, scopes=scopes)
-    gc = gspread.authorize(creds)
+    return gspread.authorize(creds)
+
+def get_diccionario():
+    """Lee la hoja Categorias y devuelve un dict {subcategoria: categoria}."""
+    gc = conectar_sheets()
     spreadsheet = gc.open_by_key(os.getenv("SPREADSHEET_ID"))
-    return spreadsheet.worksheet(os.getenv("HOJA_NOMBRE", "Hoja1"))
+    hoja = spreadsheet.worksheet("Categorias")
+    filas = hoja.get_all_values()
+    diccionario = {}
+    for fila in filas[1:]:  # saltar encabezado
+        if len(fila) >= 2 and fila[0].strip():
+            sub = fila[0].strip().lower()
+            cat = fila[1].strip().capitalize()
+            diccionario[sub] = cat
+    return diccionario
 
+def buscar_categoria(subcategoria, diccionario):
+    """Busca la categoría de una subcategoría. Si no encuentra, devuelve Varios."""
+    return diccionario.get(subcategoria.strip().lower(), "Varios")
 
-def cargar_gasto(descripcion, categoria, subcategoria, monto):
+def cargar_gasto(origen, categoria, subcategoria, monto):
     hoja = get_hoja()
     ahora = datetime.now(timezone(timedelta(hours=-3)))
     fecha = ahora.strftime("%d/%m/%Y")
     hora = ahora.strftime("%H:%M")
-    hoja.append_row([fecha, hora, categoria, descripcion, subcategoria, monto])
+    hoja.append_row([fecha, hora, origen, categoria, subcategoria, monto])
 
 
-# ── Normalizar categoría ──────────────────────────────────────────────────────
-def normalizar_categoria(texto):
-    aliases_particular = ["casa", "particular", "personales", "personal"]
+# ── Normalizar origen ─────────────────────────────────────────────────────────
+def normalizar_origen(texto):
+    aliases_particular = ["casa", "particular", "personales", "personal", "hogar"]
     aliases_negocio = ["negocio", "gimnasio", "trabajo", "gym", "urban"]
-    cat = texto.strip().lower()
-    if cat in aliases_particular:
+    t = texto.strip().lower()
+    if t in aliases_particular:
         return "Particular"
-    elif cat in aliases_negocio:
+    elif t in aliases_negocio:
         return "Negocio"
     else:
         return texto.strip().capitalize()
@@ -63,15 +83,18 @@ def limpiar_monto(texto):
     return int(solo_numeros) if solo_numeros else None
 
 
-def parsear_gasto(texto):
+def parsear_gasto(texto, diccionario):
+    """
+    Formato principal (3 campos):  origen , subcategoria , monto
+    Formato extendido (4 campos):  origen , subcategoria , descripcion_extra , monto
+    """
     partes = [p.strip() for p in texto.split(",")]
 
-    if len(partes) == 4:
-        descripcion, categoria, subcategoria, monto_raw = partes
-    elif len(partes) == 3:
-        # Formato: categoria , descripcion , monto
-        categoria, descripcion, monto_raw = partes
-        subcategoria = "-"
+    if len(partes) == 3:
+        origen_raw, subcategoria_raw, monto_raw = partes
+        descripcion_extra = ""
+    elif len(partes) == 4:
+        origen_raw, subcategoria_raw, descripcion_extra, monto_raw = partes
     else:
         return None
 
@@ -79,10 +102,20 @@ def parsear_gasto(texto):
     if not monto:
         return None
 
+    origen = normalizar_origen(origen_raw)
+    subcategoria = subcategoria_raw.strip().capitalize()
+    categoria = buscar_categoria(subcategoria_raw, diccionario)
+
+    # Si hay descripción extra la combinamos con subcategoría
+    if descripcion_extra.strip():
+        descripcion_final = f"{subcategoria} - {descripcion_extra.strip().capitalize()}"
+    else:
+        descripcion_final = subcategoria
+
     return {
-        "descripcion": descripcion.strip().capitalize(),
-        "categoria": normalizar_categoria(categoria),
-        "subcategoria": subcategoria.strip().capitalize(),
+        "origen": origen,
+        "categoria": categoria,
+        "subcategoria": descripcion_final,
         "monto": monto,
     }
 
@@ -113,8 +146,8 @@ def mensaje_ok(datos):
     ahora = datetime.now(timezone(timedelta(hours=-3)))
     return (
         f"✅ *Gasto registrado*\n"
-        f"📝 {datos['descripcion']}\n"
-        f"🏷️ {datos['categoria']} › {datos['subcategoria']}\n"
+        f"🏠 {datos['origen']}\n"
+        f"📂 {datos['categoria']} › {datos['subcategoria']}\n"
         f"💰 {monto_fmt}\n"
         f"🕐 {ahora.strftime('%d/%m/%Y %H:%M')}"
     )
@@ -122,17 +155,20 @@ def mensaje_ok(datos):
 
 AYUDA = (
     "📋 *Formato para cargar un gasto:*\n\n"
-    "*4 campos:*\n"
-    "`descripción , categoría , subcategoría , monto`\n"
-    "• `combustible , particular , auto , 115000`\n"
-    "• `factura de luz , negocio , calefaccion , 535000`\n\n"
-    "*3 campos (sin subcategoría):*\n"
-    "`categoría , descripción , monto`\n"
-    "• `particular , mercado , 150000`\n"
-    "• `negocio , alquiler , 400000`\n\n"
-    "*Categorías válidas:*\n"
-    "• Particular: casa, particular, personal\n"
+    "*3 campos:*\n"
+    "`origen , subcategoría , monto`\n"
+    "• `particular , luz , 35000`\n"
+    "• `gimnasio , ferreteria , 4000`\n"
+    "• `casa , mercado , 15000`\n\n"
+    "*4 campos (con detalle extra):*\n"
+    "`origen , subcategoría , detalle , monto`\n"
+    "• `negocio , repuestos , bulones , 4000`\n"
+    "• `particular , servicios , agua , 49000`\n\n"
+    "*Orígenes válidos:*\n"
+    "• Particular: casa, particular, personal, hogar\n"
     "• Negocio: negocio, gimnasio, gym, urban\n\n"
+    "💡 Las categorías se buscan automáticamente.\n"
+    "   Si no se encuentra → *Varios*\n\n"
     "Comandos: `ayuda` | `ultimo`"
 )
 
@@ -147,8 +183,8 @@ def ultimo_gasto():
         monto_fmt = f"${int(ultima[5]):,.0f}".replace(",", ".")
         return (
             f"📌 *Último gasto:*\n"
-            f"📝 {ultima[2]}\n"
-            f"🏷️ {ultima[3]} › {ultima[4]}\n"
+            f"🏠 {ultima[2]}\n"
+            f"📂 {ultima[3]} › {ultima[4]}\n"
             f"💰 {monto_fmt}\n"
             f"🕐 {ultima[0]} {ultima[1]}"
         )
@@ -183,7 +219,13 @@ def webhook():
     if texto in ("ultimo", "último", "last"):
         return responder(ultimo_gasto())
 
-    datos = parsear_gasto(texto_raw)
+    # Cargar diccionario desde Google Sheets
+    try:
+        diccionario = get_diccionario()
+    except Exception as e:
+        return responder(f"❌ Error al leer el diccionario de categorías:\n{e}")
+
+    datos = parsear_gasto(texto_raw, diccionario)
     if not datos:
         return responder(
             f"❓ No entendí el formato.\n\n"
@@ -193,7 +235,7 @@ def webhook():
 
     try:
         cargar_gasto(
-            datos["descripcion"],
+            datos["origen"],
             datos["categoria"],
             datos["subcategoria"],
             datos["monto"],
